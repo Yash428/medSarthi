@@ -104,3 +104,23 @@ def get_patient_history(
         "reports": reports
     }
 
+@router.get("/patients/{patient_id}/vitals", response_model=List[schemas.VitalLogResponse])
+def get_patient_vitals(
+    patient_id: int,
+    current_user: models.User = Depends(get_current_doctor),
+    db: Session = Depends(get_db)
+):
+    # Verify the doctor has seen this patient
+    has_access = db.query(models.Appointment).filter(
+        models.Appointment.doctor_id == current_user.doctor_profile.id,
+        models.Appointment.patient_id == patient_id
+    ).first() is not None
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Not authorized to view this patient's vitals")
+
+    return db.query(models.VitalLog)\
+             .filter(models.VitalLog.patient_id == patient_id)\
+             .order_by(models.VitalLog.recorded_at.desc())\
+             .all()
+

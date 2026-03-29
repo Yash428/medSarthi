@@ -37,6 +37,7 @@ class PatientProfile(Base):
     appointments = relationship("Appointment", back_populates="patient", foreign_keys="[Appointment.patient_id]")
     prescriptions = relationship("Prescription", back_populates="patient", foreign_keys="[Prescription.patient_id]")
     reports = relationship("MedicalReport", back_populates="patient")
+    vital_logs = relationship("VitalLog", back_populates="patient")
 
 class DoctorProfile(Base):
     __tablename__ = "doctor_profiles"
@@ -88,3 +89,15 @@ class MedicalReport(Base):
     notes = Column(Text, nullable=True)
 
     patient = relationship("PatientProfile", back_populates="reports")
+
+class VitalLog(Base):
+    __tablename__ = "vital_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patient_profiles.id"))
+    vital_type = Column(String, nullable=False)  # e.g. "BP", "BLOOD_SUGAR"
+    value = Column(String, nullable=False)        # e.g. "120/80" or "140 mg/dL"
+    notes = Column(Text, nullable=True)
+    recorded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    patient = relationship("PatientProfile", back_populates="vital_logs")

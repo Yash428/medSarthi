@@ -116,3 +116,27 @@ def get_history(current_user: models.User = Depends(get_current_patient), db: Se
 @router.get("/doctors", response_model=List[schemas.DoctorProfileResponse])
 def get_all_doctors(current_user: models.User = Depends(get_current_patient), db: Session = Depends(get_db)):
     return db.query(models.DoctorProfile).all()
+
+@router.post("/vitals", response_model=schemas.VitalLogResponse)
+def log_vital(
+    vital: schemas.VitalLogCreate,
+    current_user: models.User = Depends(get_current_patient),
+    db: Session = Depends(get_db)
+):
+    log = models.VitalLog(
+        patient_id=current_user.patient_profile.id,
+        vital_type=vital.vital_type,
+        value=vital.value,
+        notes=vital.notes
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return log
+
+@router.get("/vitals", response_model=List[schemas.VitalLogResponse])
+def get_vitals(current_user: models.User = Depends(get_current_patient), db: Session = Depends(get_db)):
+    return db.query(models.VitalLog)\
+             .filter(models.VitalLog.patient_id == current_user.patient_profile.id)\
+             .order_by(models.VitalLog.recorded_at.desc())\
+             .all()

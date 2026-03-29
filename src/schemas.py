@@ -115,3 +115,19 @@ class DoctorProfileUpdate(BaseModel):
     specialization: Optional[str] = None
     experience_years: Optional[int] = None
     clinic_address: Optional[str] = None
+
+class VitalLogCreate(BaseModel):
+    vital_type: str  # "BP" or "BLOOD_SUGAR"
+    value: str
+    notes: Optional[str] = None
+
+class VitalLogResponse(BaseModel):
+    id: int
+    patient_id: int
+    vital_type: str
+    value: str
+    notes: Optional[str]
+    recorded_at: datetime
+
+    class Config:
+        from_attributes = True
