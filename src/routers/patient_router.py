@@ -3,9 +3,11 @@ import shutil
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List
-from src import models, schemas
+from src import models, schemas, ocr_service
 from src.database import get_db
 from src.dependencies import get_current_patient
+import tempfile
+from pdf2image import convert_from_path
 
 router = APIRouter(prefix="/api/patient", tags=["patient"])
 
@@ -140,3 +142,45 @@ def get_vitals(current_user: models.User = Depends(get_current_patient), db: Ses
              .filter(models.VitalLog.patient_id == current_user.patient_profile.id)\
              .order_by(models.VitalLog.recorded_at.desc())\
              .all()
+
+@router.post("/reports/analyze")
+def analyze_report(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(get_current_patient)
+):
+    """
+    Temporarily saves the uploaded file, runs OCR, 
+    and returns a structured JSON of extracted medical metrics.
+    """
+    suffix = os.path.splitext(file.filename)[1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = tmp.name
+
+    try:
+        raw_text = ""
+        # Handle PDF
+        if suffix.lower() == ".pdf":
+            # Convert first page to image for OCR (common for diagnostic reports)
+            images = convert_from_path(tmp_path, first_page=1, last_page=1)
+            if images:
+                # Save first page as temp image
+                img_path = tmp_path + ".jpg"
+                images[0].save(img_path, "JPEG")
+                raw_text = ocr_service.extract_text_from_file(img_path)
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+        else:
+            # Handle direct image
+            raw_text = ocr_service.extract_text_from_file(tmp_path)
+
+        if not raw_text:
+            return {"metrics": [], "error": "No text could be extracted from this file."}
+
+        # Use AI to parse the raw text into structured key-value pairs
+        structured_metrics = ocr_service.parse_medical_data_with_llm(raw_text)
+        
+        return {"metrics": structured_metrics, "raw_text_extracted": raw_text[:500]} # Return snippet for debugging
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)

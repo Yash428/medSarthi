@@ -12,3 +12,6 @@ langchain-community
 langchain-groq
 langchain-ollama
 pydantic[email]
+easyocr
+opencv-python-headless
+pdf2image
