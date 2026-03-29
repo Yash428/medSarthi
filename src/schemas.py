@@ -10,6 +10,11 @@ class UserCreate(BaseModel):
     password: str
     role: UserRole
 
+class UserRegisterByDoctor(BaseModel):
+    email: EmailStr
+    username: str
+    # role is implicitly patient
+
 class UserResponse(BaseModel):
     id: int
     email: EmailStr
@@ -27,6 +32,13 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     user_id: Optional[int] = None
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
 
 # Business Schemas
 class AppointmentCreate(BaseModel):
@@ -50,15 +62,17 @@ class AppointmentResponse(BaseModel):
 
 class PrescriptionCreate(BaseModel):
     patient_id: int
-    medicine_details: str
+    medicine_details: Optional[str] = None
     instructions: Optional[str] = None
+    lab_orders: Optional[str] = None
 
 class PrescriptionResponse(BaseModel):
     id: int
     patient_id: int
     doctor_id: int
-    medicine_details: str
+    medicine_details: Optional[str]
     instructions: Optional[str]
+    lab_orders: Optional[str]
     created_at: datetime
 
     class Config:
@@ -71,6 +85,8 @@ class MedicalReportResponse(BaseModel):
     file_path: str
     uploaded_at: datetime
     notes: Optional[str]
+    prescription_id: Optional[int] = None
+    linked_test: Optional[str] = None
 
     class Config:
         from_attributes = True

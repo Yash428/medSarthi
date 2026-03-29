@@ -1,11 +1,12 @@
 import os
 import shutil
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
 from src import models, schemas, ocr_service
 from src.database import get_db
 from src.dependencies import get_current_patient
+from src.utils.email_service import send_appointment_notification
 import tempfile
 from pdf2image import convert_from_path
 
@@ -39,7 +40,12 @@ def update_profile(
     return profile
 
 @router.post("/appointments", response_model=schemas.AppointmentResponse)
-def book_appointment(appointment: schemas.AppointmentCreate, current_user: models.User = Depends(get_current_patient), db: Session = Depends(get_db)):
+def book_appointment(
+    appointment: schemas.AppointmentCreate, 
+    background_tasks: BackgroundTasks,
+    current_user: models.User = Depends(get_current_patient), 
+    db: Session = Depends(get_db)
+):
     db_appointment = models.Appointment(
         patient_id=current_user.patient_profile.id,
         doctor_id=appointment.doctor_id,
@@ -49,6 +55,29 @@ def book_appointment(appointment: schemas.AppointmentCreate, current_user: model
     db.add(db_appointment)
     db.commit()
     db.refresh(db_appointment)
+
+    # Notify patient and doctor
+    try:
+        doctor_profile = db.query(models.DoctorProfile).filter(models.DoctorProfile.id == appointment.doctor_id).first()
+        if doctor_profile and doctor_profile.user:
+            date_str = db_appointment.appointment_date.strftime('%Y-%m-%d %H:%M')
+            # Notify Patient
+            background_tasks.add_task(
+                send_appointment_notification, 
+                current_user.email, 
+                date_str, 
+                doctor_profile.user.username
+            )
+            # Notify Doctor
+            background_tasks.add_task(
+                send_appointment_notification, 
+                doctor_profile.user.email, 
+                date_str, 
+                f"{current_user.username} (Patient)"
+            )
+    except Exception as e:
+        print(f"Appointment notification error: {e}")
+
     return db_appointment
 
 @router.get("/appointments", response_model=List[schemas.AppointmentResponse])
@@ -63,6 +92,8 @@ def get_prescriptions(current_user: models.User = Depends(get_current_patient), 
 def upload_report(
     file: UploadFile = File(...), 
     notes: str = Form(None),
+    prescription_id: int = Form(None),
+    linked_test: str = Form(None),
     current_user: models.User = Depends(get_current_patient), 
     db: Session = Depends(get_db)
 ):
@@ -74,7 +105,9 @@ def upload_report(
         patient_id=current_user.patient_profile.id,
         file_name=file.filename,
         file_path=file_path,
-        notes=notes
+        notes=notes,
+        prescription_id=prescription_id,
+        linked_test=linked_test
     )
     db.add(report)
     db.commit()

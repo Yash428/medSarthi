@@ -19,6 +19,8 @@ class User(Base):
     role = Column(SQLEnum(UserRole), nullable=False, default=UserRole.PATIENT)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    reset_token = Column(String, nullable=True)
+    reset_token_expiry = Column(DateTime(timezone=True), nullable=True)
 
     patient_profile = relationship("PatientProfile", back_populates="user", uselist=False)
     doctor_profile = relationship("DoctorProfile", back_populates="user", uselist=False)
@@ -71,8 +73,9 @@ class Prescription(Base):
     id = Column(Integer, primary_key=True, index=True)
     patient_id = Column(Integer, ForeignKey("patient_profiles.id"))
     doctor_id = Column(Integer, ForeignKey("doctor_profiles.id"))
-    medicine_details = Column(Text, nullable=False)
+    medicine_details = Column(Text, nullable=True) # Now optional for lab orders
     instructions = Column(Text, nullable=True)
+    lab_orders = Column(Text, nullable=True) # JSON or structured string for lab tests
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     patient = relationship("PatientProfile", back_populates="prescriptions")
@@ -87,6 +90,8 @@ class MedicalReport(Base):
     file_path = Column(String, nullable=False)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
     notes = Column(Text, nullable=True)
+    prescription_id = Column(Integer, ForeignKey("prescriptions.id"), nullable=True)
+    linked_test = Column(String, nullable=True)
 
     patient = relationship("PatientProfile", back_populates="reports")
 

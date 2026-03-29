@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
-from src import models, schemas
+from src import models, schemas, auth
 from src.database import get_db
 from src.dependencies import get_current_doctor
+from src.utils.email_service import send_registration_email, send_lab_order_notification
+import secrets
+import string
+import json
 
 router = APIRouter(prefix="/api/doctor", tags=["doctor"])
 
@@ -20,6 +24,7 @@ def get_patients(current_user: models.User = Depends(get_current_doctor), db: Se
 @router.post("/prescriptions", response_model=schemas.PrescriptionResponse)
 def create_prescription(
     prescription: schemas.PrescriptionCreate, 
+    background_tasks: BackgroundTasks,
     current_user: models.User = Depends(get_current_doctor), 
     db: Session = Depends(get_db)
 ):
@@ -32,11 +37,27 @@ def create_prescription(
         patient_id=prescription.patient_id,
         doctor_id=current_user.doctor_profile.id,
         medicine_details=prescription.medicine_details,
-        instructions=prescription.instructions
+        instructions=prescription.instructions,
+        lab_orders=prescription.lab_orders
     )
     db.add(db_prescription)
     db.commit()
     db.refresh(db_prescription)
+
+    # If there are lab orders, notify the patient
+    if prescription.lab_orders and patient.user:
+        try:
+            lab_tests = json.loads(prescription.lab_orders)
+            background_tasks.add_task(
+                send_lab_order_notification, 
+                patient.user.email, 
+                current_user.username, 
+                lab_tests
+            )
+        except Exception as e:
+            # Don't fail the prescription creation if email fails
+            print(f"Notification error: {e}")
+
     return db_prescription
 
 @router.get("/appointments", response_model=List[schemas.AppointmentResponse])
@@ -123,4 +144,45 @@ def get_patient_vitals(
              .filter(models.VitalLog.patient_id == patient_id)\
              .order_by(models.VitalLog.recorded_at.desc())\
              .all()
+
+@router.post("/register-patient", response_model=schemas.UserResponse)
+def register_patient(
+    patient_data: schemas.UserRegisterByDoctor,
+    background_tasks: BackgroundTasks,
+    current_doctor: models.User = Depends(get_current_doctor),
+    db: Session = Depends(get_db)
+):
+    # Check if user already exists
+    existing = db.query(models.User).filter(
+        (models.User.email == patient_data.email) | (models.User.username == patient_data.username)
+    ).first()
+    
+    if existing:
+        raise HTTPException(status_code=400, detail="User with this email/username already exists.")
+    
+    # Generate temporary password
+    alphabet = string.ascii_letters + string.digits
+    temp_password = ''.join(secrets.choice(alphabet) for i in range(8))
+    hashed_password = auth.get_password_hash(temp_password)
+    
+    # Create user
+    new_user = models.User(
+        email=patient_data.email,
+        username=patient_data.username,
+        hashed_password=hashed_password,
+        role=models.UserRole.PATIENT
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    # Create profile
+    profile = models.PatientProfile(user_id=new_user.id)
+    db.add(profile)
+    db.commit()
+    
+    # "Send" email asynchronously
+    background_tasks.add_task(send_registration_email, new_user.email, new_user.username, temp_password)
+    
+    return new_user
 
