@@ -75,6 +75,13 @@ class MedicalReportResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class UserBasicInfo(BaseModel):
+    username: str
+    email: EmailStr
+
+    class Config:
+        from_attributes = True
+
 class PatientProfileUpdate(BaseModel):
     age: Optional[int] = None
     gender: Optional[str] = None
@@ -84,6 +91,7 @@ class PatientProfileUpdate(BaseModel):
 class PatientProfileResponse(BaseModel):
     id: int
     user_id: int
+    user: UserBasicInfo
     age: Optional[int]
     gender: Optional[str]
     blood_group: Optional[str]
@@ -95,6 +103,7 @@ class PatientProfileResponse(BaseModel):
 class DoctorProfileResponse(BaseModel):
     id: int
     user_id: int
+    user: UserBasicInfo
     specialization: str
     experience_years: Optional[int]
     clinic_address: Optional[str]
