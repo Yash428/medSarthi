@@ -212,6 +212,10 @@ def make_tools(doctor_id: int, db: Session) -> List[Tool]:
                         lines.append("  Metrics:")
                         for attr in attrs:
                             lines.append(f"    {attr['key']}: {attr['value']}")
+                    
+                    narrative = data.get("narrative")
+                    if narrative:
+                        lines.append(f"  Radiologist Findings: {narrative}")
                 except (json.JSONDecodeError, KeyError):
                     lines.append(f"  Notes: {rep.notes}")
         return "\n".join(lines)
