@@ -147,3 +147,16 @@ class VitalLogResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+# AI Lab Recommendation Schemas
+class LabRecommendationRequest(BaseModel):
+    patient_id: Optional[int] = None
+    symptoms: str
+    current_orders: Optional[List[str]] = []
+
+class LabRecommendation(BaseModel):
+    test_name: str
+    reason: str
+
+class LabRecommendationResponse(BaseModel):
+    recommendations: List[LabRecommendation]

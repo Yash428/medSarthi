@@ -7,6 +7,8 @@ from src.database import get_db, engine
 from src.dependencies import get_current_patient, get_current_doctor
 from src.config import settings
 from src.clinic_agent import create_clinic_agent
+import re
+import json
 
 from langchain_groq import ChatGroq
 from langchain_community.llms import Ollama
@@ -105,6 +107,55 @@ def doctor_sql_agent_legacy(
 # ─────────────────────────────────────────────────────────────
 # Specialist RAG (unchanged)
 # ─────────────────────────────────────────────────────────────
+
+@router.post("/doctor/suggest-lab-orders", response_model=schemas.LabRecommendationResponse)
+def suggest_lab_orders(
+    request: schemas.LabRecommendationRequest,
+    current_user: models.User = Depends(get_current_doctor),
+    db: Session = Depends(get_db)
+):
+    """
+    Suggest lab tests and diagnostic investigations based on symptoms and current context.
+    """
+    llm = get_llm()
+    
+    patient_context = ""
+    if request.patient_id:
+        patient = db.query(models.PatientProfile).filter(models.PatientProfile.id == request.patient_id).first()
+        if patient:
+            patient_context = f"Patient Age: {patient.age or 'N/A'}, Gender: {patient.gender or 'N/A'}, History: {patient.medical_history or 'None'}. "
+
+    current_orders_str = ", ".join(request.current_orders) if request.current_orders else "None"
+
+    system_prompt = (
+        "You are a Clinical Diagnostic Assistant. Your task is to recommend laboratory tests, "
+        "imaging, or other diagnostic investigations based on the provided symptoms and patient context.\n"
+        "Format: Return ONLY a JSON object with a 'recommendations' key containing a list of objects with 'test_name' and 'reason'.\n"
+        "Example: {\"recommendations\": [{\"test_name\": \"CBC\", \"reason\": \"To check for anemia or infection due to fatigue\"}]}"
+    )
+    
+    user_prompt = (
+        f"Context: {patient_context}\n"
+        f"Symptoms: {request.symptoms}\n"
+        f"Current Orders: {current_orders_str}\n"
+        "Suggest relevant tests with reasons."
+    )
+
+    try:
+        response = llm.invoke(f"{system_prompt}\n\nUser: {user_prompt}")
+        content = response.content if hasattr(response, 'content') else str(response)
+        
+        # Extract JSON if LLM yaps
+        match = re.search(r'\{.*\}', content, re.DOTALL)
+        if match:
+            content = match.group(0)
+            
+        import json
+        data = json.loads(content)
+        return data
+    except Exception as e:
+        print(f"[suggest_lab_orders] Error: {e}")
+        return {"recommendations": []}
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains import create_retrieval_chain
