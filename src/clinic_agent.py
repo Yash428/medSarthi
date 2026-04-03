@@ -78,9 +78,7 @@ class SqlInput(BaseModel):
 def make_tools(doctor_id: int, db: Session) -> List[Tool]:
 
     def get_my_patients(query: Optional[str] = None) -> str:
-
         """Return all patients linked to this doctor."""
-
         patients = (
             db.query(models.PatientProfile)
             .join(models.Appointment, models.Appointment.patient_id == models.PatientProfile.id)
@@ -89,139 +87,127 @@ def make_tools(doctor_id: int, db: Session) -> List[Tool]:
             .all()
         )
         if not patients:
-            return "You currently have no patients linked to your account."
-        rows = []
+            return json.dumps({"error": "You currently have no patients linked to your account.", "data": []})
+        data = []
         for p in patients:
-            username = p.user.username if p.user else f"#{p.id}"
-            rows.append(
-                f"- Patient '{username}' (ID: {p.id}) | Age: {p.age or 'N/A'} | "
-                f"Gender: {p.gender or 'N/A'} | Blood Group: {p.blood_group or 'N/A'}"
-            )
-        return f"You have {len(patients)} patient(s):\n" + "\n".join(rows)
+            data.append({
+                "patient_id": p.id,
+                "username": p.user.username if p.user else "Unknown",
+                "age": p.age,
+                "gender": p.gender,
+                "blood_group": p.blood_group
+            })
+        return json.dumps({"data": data, "count": len(data)})
 
     def get_patient_summary(patient: str) -> str:
         """Get full profile and medical history for a patient."""
         patient_obj = _resolve_patient(patient, doctor_id, db)
         if not patient_obj:
-            return f"Could not find a patient matching '{patient}' in your roster."
+            return json.dumps({"error": f"Could not find a patient matching '{patient}' in your roster."})
         u = patient_obj.user
-        lines = [
-            f"Patient Profile: {u.username if u else 'Unknown'} (ID: {patient_obj.id})",
-            f"  Email:          {u.email if u else 'N/A'}",
-            f"  Age:            {patient_obj.age or 'Not recorded'}",
-            f"  Gender:         {patient_obj.gender or 'Not recorded'}",
-            f"  Blood Group:    {patient_obj.blood_group or 'Not recorded'}",
-            f"  Medical History: {patient_obj.medical_history or 'No history recorded'}",
-        ]
-        return "\n".join(lines)
+        return json.dumps({
+            "profile": {
+                "id": patient_obj.id,
+                "username": u.username if u else "Unknown",
+                "email": u.email if u else "N/A",
+                "age": patient_obj.age,
+                "gender": patient_obj.gender,
+                "blood_group": patient_obj.blood_group,
+                "medical_history_notes": patient_obj.medical_history
+            }
+        })
 
     def get_patient_prescriptions(patient: str) -> str:
         """Get all prescriptions issued to a patient."""
         patient_obj = _resolve_patient(patient, doctor_id, db)
         if not patient_obj:
-            return f"Could not find a patient matching '{patient}' in your roster."
+            return json.dumps({"error": f"Could not find patient matching '{patient}'."})
+        now = datetime.now()
         prescriptions = (
             db.query(models.Prescription)
-            .filter(models.Prescription.patient_id == patient_obj.id)
+            .filter(
+                models.Prescription.patient_id == patient_obj.id,
+                models.Prescription.medicine_details != None,
+                models.Prescription.medicine_details != "",
+                models.Prescription.created_at <= now
+            )
             .order_by(models.Prescription.created_at.desc())
             .all()
         )
         if not prescriptions:
-            return f"No prescriptions found for patient {patient_obj.user.username if patient_obj.user else patient_obj.id}."
-        result = [f"Prescriptions for {patient_obj.user.username if patient_obj.user else patient_obj.id} ({len(prescriptions)} total):"]
-        for i, rx in enumerate(prescriptions, 1):
-            result.append(f"\n--- Prescription #{i} | {rx.created_at.strftime('%d %b %Y')} ---")
-            result.append(rx.medicine_details)
-            if rx.instructions:
-                result.append(f"Instructions: {rx.instructions}")
-        return "\n".join(result)
+            return json.dumps({"error": f"No past medication records found for patient {patient_obj.user.username if patient_obj.user else patient_obj.id}.", "data": []})
+        data = []
+        for rx in prescriptions:
+            data.append({
+                "issued_on": rx.created_at.isoformat(),
+                "medicine_details": rx.medicine_details,
+                "instructions": rx.instructions
+            })
+        return json.dumps({"patient_name": patient_obj.user.username if patient_obj.user else "Patient", "prescriptions": data})
 
     def get_patient_vitals(patient: str) -> str:
-        """Get blood pressure and blood sugar history + trend analysis for a patient."""
+        """Get blood pressure and blood sugar history for a patient."""
         patient_obj = _resolve_patient(patient, doctor_id, db)
         if not patient_obj:
-            return f"Could not find a patient matching '{patient}' in your roster."
+            return json.dumps({"error": f"Could not find patient matching '{patient}'."})
+        now = datetime.now()
         vitals = (
             db.query(models.VitalLog)
-            .filter(models.VitalLog.patient_id == patient_obj.id)
+            .filter(
+                models.VitalLog.patient_id == patient_obj.id,
+                models.VitalLog.value != None,
+                models.VitalLog.value != "",
+                models.VitalLog.recorded_at <= now
+            )
             .order_by(models.VitalLog.recorded_at.desc())
             .limit(20)
             .all()
         )
         if not vitals:
-            return f"No vital signs logged by {patient_obj.user.username if patient_obj.user else patient_obj.id} yet."
-
-        bp_logs = [v for v in vitals if v.vital_type == "BP"]
-        sugar_logs = [v for v in vitals if v.vital_type == "BLOOD_SUGAR"]
-        name = patient_obj.user.username if patient_obj.user else str(patient_obj.id)
-        lines = [f"Vital Signs for {name}:"]
-
-        if bp_logs:
-            lines.append(f"\n🩺 Blood Pressure ({len(bp_logs)} readings):")
-            for v in bp_logs[:5]:
-                lines.append(f"  {v.recorded_at.strftime('%d %b %Y %H:%M')} → {v.value} mmHg" + (f"  [{v.notes}]" if v.notes else ""))
-            # Trend analysis
-            systolics = [int(v.value.split("/")[0]) for v in bp_logs if "/" in v.value and v.value.split("/")[0].isdigit()]
-            if len(systolics) >= 3:
-                trend = _analyze_trend(systolics[:5])
-                lines.append(f"  📈 Trend (last {min(5, len(systolics))} readings): {trend}")
-                latest = systolics[0]
-                if latest >= 140:
-                    lines.append("  ⚠️  CLINICAL FLAG: Latest reading indicates Stage 2 Hypertension. Consider review.")
-                elif latest >= 130:
-                    lines.append("  ⚠️  CLINICAL FLAG: Latest reading indicates Stage 1 Hypertension.")
-
-        if sugar_logs:
-            lines.append(f"\n🩸 Blood Sugar ({len(sugar_logs)} readings):")
-            for v in sugar_logs[:5]:
-                lines.append(f"  {v.recorded_at.strftime('%d %b %Y %H:%M')} → {v.value} mg/dL" + (f"  [{v.notes}]" if v.notes else ""))
-            sugars = [int(v.value.split()[0]) for v in sugar_logs if v.value.split()[0].isdigit()]
-            if len(sugars) >= 3:
-                trend = _analyze_trend(sugars[:5])
-                lines.append(f"  📈 Trend: {trend}")
-                if sugars[0] >= 126:
-                    lines.append("  ⚠️  CLINICAL FLAG: Latest reading is in Diabetic range. Review current medications.")
-                elif sugars[0] >= 100:
-                    lines.append("  ⚠️  CLINICAL FLAG: Latest reading is Pre-diabetic. Recommend lifestyle intervention.")
-
-        return "\n".join(lines)
+            return json.dumps({"error": "No vital signs logged yet.", "data": []})
+        
+        data = []
+        for v in vitals:
+            data.append({
+                "type": v.vital_type,
+                "value": v.value,
+                "recorded_at": v.recorded_at.isoformat(),
+                "notes": v.notes
+            })
+        return json.dumps({"patient": patient_obj.user.username if patient_obj.user else "Patient", "vitals": data})
 
     def get_patient_reports(patient: str) -> str:
-        """Get all uploaded medical reports and diagnostic results for a patient."""
+        """Get all medical reports and diagnostic results for a patient."""
         patient_obj = _resolve_patient(patient, doctor_id, db)
         if not patient_obj:
-            return f"Could not find a patient matching '{patient}' in your roster."
+            return json.dumps({"error": f"Could not find patient matching '{patient}'."})
+        now = datetime.now()
         reports = (
             db.query(models.MedicalReport)
-            .filter(models.MedicalReport.patient_id == patient_obj.id)
+            .filter(
+                models.MedicalReport.patient_id == patient_obj.id,
+                models.MedicalReport.uploaded_at <= now
+            )
             .order_by(models.MedicalReport.uploaded_at.desc())
             .all()
         )
         if not reports:
-            return f"No medical reports uploaded by {patient_obj.user.username if patient_obj.user else patient_obj.id}."
-        name = patient_obj.user.username if patient_obj.user else str(patient_obj.id)
-        lines = [f"Medical Reports for {name} ({len(reports)} file(s)):"]
+            return json.dumps({"error": "No past medical reports found.", "data": []})
+        data = []
         for rep in reports:
-            lines.append(f"\n📄 {rep.file_name} | Uploaded: {rep.uploaded_at.strftime('%d %b %Y')}")
+            parsed_notes = None
             if rep.notes:
-                try:
-                    data = json.loads(rep.notes)
-                    lines.append(f"  Report Type: {data.get('type', 'Unknown')}")
-                    attrs = data.get("attributes", [])
-                    if attrs:
-                        lines.append("  Metrics:")
-                        for attr in attrs:
-                            lines.append(f"    {attr['key']}: {attr['value']}")
-                    
-                    narrative = data.get("narrative")
-                    if narrative:
-                        lines.append(f"  Radiologist Findings: {narrative}")
-                except (json.JSONDecodeError, KeyError):
-                    lines.append(f"  Notes: {rep.notes}")
-        return "\n".join(lines)
+                try: parsed_notes = json.loads(rep.notes)
+                except: parsed_notes = rep.notes
+            data.append({
+                "file_name": rep.file_name,
+                "uploaded_at": rep.uploaded_at.isoformat(),
+                "notes": parsed_notes
+            })
+        return json.dumps({"patient": patient_obj.user.username if patient_obj.user else "Patient", "reports": data})
 
     def get_appointments(filter: str = "") -> str:
-        """Get appointment history. Pass patient name, 'upcoming', 'completed', 'cancelled', or leave blank."""
+        """Get appointment history."""
         query = (
             db.query(models.Appointment)
             .filter(models.Appointment.doctor_id == doctor_id)
@@ -241,20 +227,18 @@ def make_tools(doctor_id: int, db: Session) -> List[Tool]:
 
         appointments = query.limit(15).all()
         if not appointments:
-            return "No appointments found matching that filter."
+            return json.dumps({"error": "No matching appointments found.", "data": []})
 
-        lines = [f"Appointments ({len(appointments)} shown):"]
+        data = []
         for a in appointments:
-            patient_name = "Unknown"
-            if a.patient and a.patient.user:
-                patient_name = a.patient.user.username
-            status_emoji = {"SCHEDULED": "🕐", "COMPLETED": "✅", "CANCELLED": "❌"}.get(a.status, "?")
-            lines.append(
-                f"  {status_emoji} {a.appointment_date.strftime('%d %b %Y %H:%M')} | "
-                f"Patient: {patient_name} | Status: {a.status}"
-                + (f" | Notes: {a.notes}" if a.notes else "")
-            )
-        return "\n".join(lines)
+            data.append({
+                "id": a.id,
+                "date": a.appointment_date.isoformat(),
+                "patient": a.patient.user.username if a.patient and a.patient.user else "Unknown",
+                "status": a.status,
+                "notes": a.notes
+            })
+        return json.dumps({"appointments": data})
 
     def run_safe_query(sql: str) -> str:
         """Execute a custom read-only SELECT SQL query against the database."""
@@ -363,25 +347,43 @@ def _analyze_trend(values: List[int]) -> str:
 # AGENT FACTORY
 # ─────────────────────────────────────────────────────────────
 
-def create_clinic_agent(doctor_id: int, db: Session) -> AgentExecutor:
-    """Build a tool-calling agent executor for the given doctor."""
+def create_clinic_agent(doctor_id: int, db: Session, language: str = "en") -> AgentExecutor:
+    """Build a tool-calling agent executor for the given doctor, with multi-lingual support."""
     llm = get_llm()
     tools = make_tools(doctor_id, db)
+    
+    lang_map = {
+        "hi": "Hindi",
+        "gu": "Gujarati",
+        "en": "English"
+    }
+    target_lang = lang_map.get(language, "English")
 
     system_content = (
-        "You are MedSarthi Clinic Intelligence, a professional AI for doctors. "
-        "Your goal is to answer questions using strictly the available tools.\n\n"
-        "DATABASE OVERVIEW: " + SCHEMA_HELP + "\n\n"
+        "You are MedSarthi Clinic Intelligence, a professional AI medical analyst for doctors. "
+        f"MANDATORY: You MUST provide your entire final answer and clinical analysis in {target_lang}. "
+        f"If the target language is Gujarati, do not use English even if the tools return data in English.\n\n"
+        "GOAL:\n"
+        "Instead of just listing data, provide a professional, synthesized clinical summary. "
+        "Highlight significant trends, anomalies, and at-risk metrics (e.g., Blood Pressure >= 140/90 or Blood Sugar >= 126).\n\n"
+        "STRICT TRUTH RULE:\n"
+        "- If a tool returns a 'No data found' or an error message, report that CLEARLY.\n"
+        "- NEVER invent or hallucinate medicine names, dosages, or trends if the data is not in the tool observation.\n"
+        "- If medicine_details is empty or null, say 'No active medications found'.\n\n"
+        "FORMATTING:\n"
+        "- All tools now return structured JSON. Parse the JSON and present it professionally.\n"
+        "- Use Markdown tables for vitals and longitudinal data.\n"
+        "- Use bold text for critical findings.\n"
+        "- Organize your response with clear headers (e.g., Clinical Summary, Vital Trends, Medications).\n\n"
+        f"DATABASE OVERVIEW: {SCHEMA_HELP}\n\n"
         "CLINICAL RULES:\n"
-        "- Highlight BP >= 140/90 (Hypertension) or Sugar >= 126 (Diabetes).\n"
         "- Always summarize trends if multiple readings are present.\n"
-        "- Once you call a tool and receive data, analyze it immediately and provide your FINAL ANSWER. "
-        "DO NOT call the same tool with the same parameters more than once.\n\n"
+        "- Once you call a tool and receive data, provide a structured analytical FINAL ANSWER.\n"
+        "- DO NOT call the same tool with the same parameters more than once.\n\n"
         "INSTRUCTIONS:\n"
         "1. Identify the patient/topic.\n"
         "2. Call the most relevant tool.\n"
-        "3. Process the observation and give a structured clinical summary.\n"
-        "4. Stop iterating as soon as you have the answer."
+        "3. Process the observation and give a professional clinical summary in the specified language."
     )
 
     prompt = ChatPromptTemplate.from_messages([

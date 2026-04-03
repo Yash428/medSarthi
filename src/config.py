@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # AI Providers
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    SARWAM_API_KEY: str = os.getenv("SARWAM_API_KEY", "")
 
     # Email (SMTP) Settings
     SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")

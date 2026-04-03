@@ -15,3 +15,8 @@ pydantic[email]
 easyocr
 opencv-python-headless
 pdf2image
+openai-whisper
+pydub
+ffmpeg-python
+audioop-lts
+requests

@@ -9,6 +9,7 @@ from src.dependencies import get_current_patient
 from src.utils.email_service import send_appointment_notification
 import tempfile
 from pdf2image import convert_from_path
+import re
 
 router = APIRouter(prefix="/api/patient", tags=["patient"])
 
@@ -217,3 +218,46 @@ def analyze_report(
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+def parse_medicines(details: str):
+    """
+    Extracts medicine details from the prescribed block.
+    Example Format: 1. Paracetamol | Timing: 1-0-1 | After Food | Duration: 5 Days
+    """
+    if not details: return []
+    # Find the medicines section in the multi-part prescription text
+    med_section = re.search(r'\[Medicines Prescribed\]\n(.*?)(?=\n\n|\Z)', details, re.S)
+    content = med_section.group(1).strip() if med_section else details
+    
+    lines = content.split('\n')
+    extracted = []
+    for line in lines:
+        # Regex to handle: 1. Name | Timing: X | Y | Duration: Z
+        match = re.match(r'^\d+\.\s*(.*?)\s*\|\s*Timing:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*Duration:\s*(.*)', line)
+        if match:
+            extracted.append({
+                "name": match.group(1).strip(),
+                "dosage": match.group(2).strip(),
+                "timing": match.group(3).strip(),
+                "duration": match.group(4).strip()
+            })
+    return extracted
+
+@router.get("/medicines")
+def get_unique_medicines(current_user: models.User = Depends(get_current_patient), db: Session = Depends(get_db)):
+    prescriptions = db.query(models.Prescription).filter(models.Prescription.patient_id == current_user.patient_profile.id).all()
+    
+    unique_meds = {}
+    for rx in prescriptions:
+        meds = parse_medicines(rx.medicine_details)
+        for m in meds:
+            name_key = m['name'].lower()
+            # De-duplicate: Keep the most recent prescription for that medicine
+            if name_key not in unique_meds or rx.created_at > unique_meds[name_key]['prescribed_at']:
+                unique_meds[name_key] = {
+                    **m,
+                    "prescribed_at": rx.created_at,
+                    "doctor_name": rx.doctor.user.username if rx.doctor and rx.doctor.user else "Unknown Doctor",
+                    "doctor_specialization": rx.doctor.specialization if rx.doctor else "General Physician"
+                }
+    
+    return sorted(unique_meds.values(), key=lambda x: x['prescribed_at'], reverse=True)
