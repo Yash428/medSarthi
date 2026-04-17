@@ -36,7 +36,7 @@ def get_llm():
         return Ollama(base_url=settings.OLLAMA_BASE_URL, model="llama3")
 
 @router.post("/patient/chat")
-def patient_ai_chat(request: ChatRequest, current_user: models.User = Depends(get_current_patient)):
+def patient_ai_chat(request: ChatRequest, current_user: models.User = Depends(get_current_patient), db: Session = Depends(get_db)):
     llm = get_llm()
     
     lang_map = {
@@ -60,12 +60,19 @@ def patient_ai_chat(request: ChatRequest, current_user: models.User = Depends(ge
     try:
         response = llm.invoke(prompt)
         content = response.content if hasattr(response, 'content') else str(response)
+        
+        # Persist history
+        user_msg = models.AIChatHistory(user_id=current_user.id, role="user", message=request.message, chat_type="patient_ai")
+        ai_msg = models.AIChatHistory(user_id=current_user.id, role="assistant", message=content, chat_type="patient_ai")
+        db.add_all([user_msg, ai_msg])
+        db.commit()
+
         return {"response": content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI provider error: {str(e)}")
 
 @router.post("/doctor/chat")
-def doctor_ai_chat(request: ChatRequest, current_user: models.User = Depends(get_current_doctor)):
+def doctor_ai_chat(request: ChatRequest, current_user: models.User = Depends(get_current_doctor), db: Session = Depends(get_db)):
     """General AI assistant for doctors."""
     llm = get_llm()
     
@@ -85,6 +92,13 @@ def doctor_ai_chat(request: ChatRequest, current_user: models.User = Depends(get
     try:
         response = llm.invoke(prompt)
         content = response.content if hasattr(response, 'content') else str(response)
+        
+        # Persist history
+        user_msg = models.AIChatHistory(user_id=current_user.id, role="user", message=request.message, chat_type="doctor_ai")
+        ai_msg = models.AIChatHistory(user_id=current_user.id, role="assistant", message=content, chat_type="doctor_ai")
+        db.add_all([user_msg, ai_msg])
+        db.commit()
+
         return {"response": content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI provider error: {str(e)}")
@@ -132,6 +146,12 @@ def doctor_clinic_insights(
              # Fallback: if no output but we have intermediate steps, the agent was close
              return {"response": "The agent was unable to finalize an answer within the iteration limit. Please try asking about a specific patient."}
 
+        # Persist history
+        user_msg = models.AIChatHistory(user_id=current_user.id, role="user", message=request.message, chat_type="doctor_insights")
+        ai_msg = models.AIChatHistory(user_id=current_user.id, role="assistant", message=output, chat_type="doctor_insights")
+        db.add_all([user_msg, ai_msg])
+        db.commit()
+
         return {"response": output}
 
     except Exception as e:
@@ -167,7 +187,15 @@ def patient_health_insights(
             "chat_history": chat_history,
         })
 
-        return {"response": result.get("output", "I was unable to retrieve your health data. Please try again.")}
+        output = result.get("output", "I was unable to retrieve your health data. Please try again.")
+        
+        # Persist history
+        user_msg = models.AIChatHistory(user_id=current_user.id, role="user", message=request.message, chat_type="patient_insights")
+        ai_msg = models.AIChatHistory(user_id=current_user.id, role="assistant", message=output, chat_type="patient_insights")
+        db.add_all([user_msg, ai_msg])
+        db.commit()
+
+        return {"response": output}
 
     except Exception as e:
         print(f"[patient_agent] Error: {e}")
@@ -312,3 +340,16 @@ async def speech_to_text(
     except Exception as e:
         print(f"[STT] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/history", response_model=schemas.ChatHistoryResponse)
+def get_chat_history(
+    chat_type: Optional[str] = None,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    query = db.query(models.AIChatHistory).filter(models.AIChatHistory.user_id == current_user.id)
+    if chat_type:
+        query = query.filter(models.AIChatHistory.chat_type == chat_type)
+    
+    history = query.order_by(models.AIChatHistory.created_at.asc()).all()
+    return {"history": history}

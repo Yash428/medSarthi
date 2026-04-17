@@ -160,3 +160,16 @@ class LabRecommendation(BaseModel):
 
 class LabRecommendationResponse(BaseModel):
     recommendations: List[LabRecommendation]
+
+class ChatHistoryEntry(BaseModel):
+    id: int
+    role: str
+    message: str
+    chat_type: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class ChatHistoryResponse(BaseModel):
+    history: List[ChatHistoryEntry]

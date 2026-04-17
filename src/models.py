@@ -106,3 +106,15 @@ class VitalLog(Base):
     recorded_at = Column(DateTime(timezone=True), server_default=func.now())
 
     patient = relationship("PatientProfile", back_populates="vital_logs")
+
+class AIChatHistory(Base):
+    __tablename__ = "ai_chat_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    role = Column(String, nullable=False)  # "user" or "assistant"
+    message = Column(Text, nullable=False)
+    chat_type = Column(String, nullable=False) # "patient_ai", "doctor_ai", "patient_insights", "doctor_insights"
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", backref="chat_history")
