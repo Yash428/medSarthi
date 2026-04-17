@@ -268,50 +268,8 @@ def suggest_lab_orders(
         print(f"[suggest_lab_orders] Error: {e}")
         return {"recommendations": []}
 
-from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from src.rag_manager import get_specialty_retriever
 
-class SpecialistChatRequest(BaseModel):
-    message: str
-    specialty: str
-    language: Optional[str] = "en"
-
-@router.post("/specialist/chat")
-def specialist_ai_chat(request: SpecialistChatRequest, current_user: models.User = Depends(get_current_patient)):
-    try:
-        llm = get_llm()
-        retriever = get_specialty_retriever(request.specialty)
-        
-        lang_map = {
-            "hi": "Hindi",
-            "gu": "Gujarati",
-            "en": "English"
-        }
-        target_lang = lang_map.get(request.language, "English")
-
-        system_prompt = (
-            f"You are a specialized AI Doctor focused on {request.specialty}. "
-            f"MANDATORY: You MUST respond in {target_lang}. "
-            f"Even if the query is in English, if the target language is Gujarati, you MUST respond in Gujarati. "
-            "Use the following retrieved context from uploaded medical literature to answer the user's question. "
-            "If the context doesn't have the answer, use your baseline medical knowledge but explicitly state that you are doing so. "
-            "\n\nContext:\n{context}"
-        )
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_content if 'system_content' in locals() else system_prompt),
-            ("human", f"Patient ({target_lang}): {{input}}\nAI Doctor ({target_lang}):")
-        ])
-        
-        question_answer_chain = create_stuff_documents_chain(llm, prompt)
-        rag_chain = create_retrieval_chain(retriever, question_answer_chain)
-        
-        response = rag_chain.invoke({"input": request.message})
-        return {"response": response["answer"]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/voice/stt")
 async def speech_to_text(
