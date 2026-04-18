@@ -25,6 +25,20 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class UserAdminCreate(BaseModel):
+    email: EmailStr
+    username: str
+    password: str
+    role: UserRole
+    is_active: Optional[bool] = True
+
+class UserAdminUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
+
 # Token Schemas
 class Token(BaseModel):
     access_token: str

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.database import engine, Base
-from src.routers import auth_router, patient_router, doctor_router, ai_router
+from src.routers import auth_router, patient_router, doctor_router, ai_router, admin_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -19,6 +19,7 @@ app.include_router(auth_router.router)
 app.include_router(patient_router.router)
 app.include_router(doctor_router.router)
 app.include_router(ai_router.router)
+app.include_router(admin_router.router)
 
 @app.get("/")
 def read_root():
